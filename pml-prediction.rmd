@@ -1,0 +1,159 @@
+### Weight-lifting performance prediction with wearable accelerometer data
+========================================================
+
+#### Executive summary
+This report aims to develop a performance prediction model on how well subjects perform dumbbell lifting exercises. The training dataset is based Velloso et al.(2013), which contains body sensing data of six health human male participants (age between 20-28 years) when they were asked to perform this exercise in five different ways. Only one of them is correct (class A) while the other four are common mistakes (classes B to E). We build a machine learning algorithm to predict activity quality from activity monitors with random forest method and data cross-validation approach: constructing prediction models (with 52 features) with a training set, construct and compare out-of-sample predictions with the test dataset, and apply the final model to predict the twenty test cases.   
+
+#### Section 1. Data preprocessing
+Data preprocessing consists of two main steps. Firstly, we clean the raw data by deleting variables with missing observations after loading raw data. We then further dividing the training data into a training set and a test set for cross validation purpose. Secondly, we preprocess the data by standardizing all variables.
+To begin with, load packages and the entire dataset. 
+```{r setoptions, echo = TRUE, results='show'}
+#Global settings: echo codes, present results and store existing results for all analysis
+opts_chunk$set(echo = TRUE, results = "show", cache = TRUE)
+#Load packages for data analysis
+library(kernlab); library(lattice); library(ggplot2); library(AppliedPredictiveModeling); library(caret)
+#Load training dataset
+dataset <-read.table("pml-training.csv", header=TRUE, sep=",",na.strings="?",stringsAsFactors=TRUE)
+#dataset <- dataset[complete.cases(dataset$classe),]
+#Load prediction dataset
+predictset <-read.table("pml-testing.csv", header=TRUE, sep=",",na.strings="?",stringsAsFactors=TRUE)
+#predictset <- predictset[complete.cases(predictset$classe),]
+```
+Step 1. Delete variables with missing data
+The entire dataset consists of 160 potential predictors (also called features) and 19220 observations. Nevertheless, many of these variables are nearly 100% missing obversations, and they are completely absent in the 20-case test set. Hence, we only develop training and test sets based on a subset of the predictors with complete data (exluding the first seven classifers since they are unrelated to body senor data). Then we use the majority of them are assigned as training data and the remaining as testing data.
+```{r}
+#non-NA column selections
+subdata <- subset(dataset,select = c("roll_belt","pitch_belt","yaw_belt","total_accel_belt","gyros_belt_x","gyros_belt_y", "gyros_belt_z", "accel_belt_x", "accel_belt_y",  "accel_belt_z",	"magnet_belt_x","magnet_belt_y", "magnet_belt_z",	"roll_arm",	"pitch_arm", "yaw_arm", "total_accel_arm", "gyros_arm_x", "gyros_arm_y", "gyros_arm_z", "accel_arm_x",	"accel_arm_y", "accel_arm_z", "magnet_arm_x",	"magnet_arm_y","magnet_arm_z","roll_dumbbell",	"pitch_dumbbell", "yaw_dumbbell", "total_accel_dumbbell","gyros_dumbbell_x",	"gyros_dumbbell_y", "gyros_dumbbell_z","accel_dumbbell_x", "accel_dumbbell_y", "accel_dumbbell_z", "magnet_dumbbell_x", "magnet_dumbbell_y", "magnet_dumbbell_z", "roll_forearm", "pitch_forearm",	"yaw_forearm", "total_accel_forearm","gyros_forearm_x","gyros_forearm_y","gyros_forearm_z","accel_forearm_x", "accel_forearm_y", "accel_forearm_z", "magnet_forearm_x", "magnet_forearm_y", "magnet_forearm_z","classe"))
+#split data into training and testing sets:
+inTrain = createDataPartition(y=subdata$classe, p = 0.7, list=FALSE)
+training = subdata[inTrain,]
+testing = subdata[-inTrain,]
+#dim(training);dim(testing)
+#str(training)
+```
+Step 2. Basic preprocessing - data standarization. The cleaned data subset contains 52 candidate features. We then standardized the data.
+```{r}
+preObj <- preProcess(training[,-53],method=c("center","scale"))
+preObj1 <- preProcess(testing[,-53],method=c("center","scale"))
+#posttraiing contains all standardized features without y variable
+posttraining <- predict(preObj,training[,-53])
+posttesting <- predict(preObj1,testing[,-53])
+#strain contains standardized features with y variable
+strain <- training
+stest <- testing
+strain[,-53] <-  posttraining
+stest[,-53] <- posttesting
+#dim(training)
+#dim(posttraining)
+#dim(strain)
+#summary(posttesting)
+```
+
+
+#### Section 2. Exploratory analysis on predictors
+Step 1. Removing zero covariates. The result (not reported due to space) suggests that all candidate predictors have sufficient variations.
+```{r,results='hide'}
+nsv <- nearZeroVar(training,saveMetrics=TRUE)
+nsv
+```
+Step 2. We apply the Principal Components Analysis (PCA) to include variables that captures most of the information amongst similar variables. The results suggest that a good number of variables are correlated, and hence it might be a good idea to weight them.
+```{r,results='hide'}
+M <- abs(cor(training[,-53]))
+diag(M) <- 0
+which(M > 0.7, arr.ind=T)
+#names(training)[c(26,27)]
+#plot(training[,26],training[,27])
+```
+We could also study the correlations of the variables. In some model specifications, we will drop some of the highly correlated variables (we hide the results  due to limited space).
+```{r,results='hide'}
+cor(posttraining)
+```
+
+#### Section 3. Random forests model selection
+The model selection consists of two main steps. First, we use the training subsamples to fit several versions of the random forest models and obtain in-sample error rate. Second, we use the model to predict out-of-sample error rates of the testing subsamples in the training set for accuracy comparisons.
+```{r}
+#increase processing speed:
+library(doParallel)
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+library(randomForest)
+#Model 1. With all (52) predictors and the standardized dataset
+strain <- na.roughfix(strain)
+modelFit1 <- randomForest(classe ~ .,method="rf",data=strain,importance=TRUE,keep.forest=TRUE)
+print(modelFit1)
+#Show "imporance" of variables: higher value mean more important:
+#round(importance(modelFit1),2)
+test1 <- predict(modelFit1,posttesting,predict.all=FALSE)
+#print(test1)
+confusionMatrix(stest$classe, test1)
+
+
+#Model 2. With all (52) predictors and the pre-standardized dataset
+strain <- na.roughfix(training)
+modelFit2 <- randomForest(classe ~ .,method="rf",data=training,importance=TRUE,keep.forest=TRUE)
+print(modelFit2)
+#Show "imporance" of variables: higher value mean more important:
+#round(importance(modelFit2),2)
+test2 <- predict(modelFit2,testing,predict.all=FALSE)
+head(test2)
+#print(test2)
+confusionMatrix(stest$classe, test2)
+
+#Model 3. combination of Model 1 and 2
+#qplot(test1,test2,colour=classe,data=stest)
+predDF <- data.frame(test1,test2,dv=stest$classe)
+head(predDF)
+combModFit <- randomForest(dv ~.,data=predDF,importance=TRUE,keep.forest=TRUE)
+print(combModFit)
+combPred <- predict(combModFit,predDF)
+#print(combPred)
+
+
+#Model 4. With a subset of predictors (key elements)
+modelFit4 <- randomForest(classe ~ roll_belt + pitch_belt + yaw_belt + accel_belt_z +magnet_belt_x + roll_arm + gyros_arm_y + gyros_dumbbell_x + gyros_dumbbell_z + accel_dumbbell_y + magnet_dumbbell_y + magnet_dumbbell_z + roll_forearm + pitch_forearm + magnet_forearm_z, preProcess="pca", data=strain, importance=TRUE,keep.forest=TRUE)
+print(modelFit4)
+test4 <- predict(modelFit4,posttesting,predict.all=FALSE)
+#print(test1)
+confusionMatrix(stest$classe, test4)
+
+```
+Trying with different models and different subsamples, we can see that model 2 has the highest in-sample error rate (less than 1%) and the highest out-of-sample prediction rate (over 99%). Reducing the number of predictors do not help in this case. The next step is to generate the real out-of-sample predictions for the 20 testing cases.
+
+#### Section 3. Model prediction
+```{r}
+#obtain a subset of the useful features:
+predictset <- subset(predictset,select = c("roll_belt","pitch_belt",  "yaw_belt",	"total_accel_belt","gyros_belt_x", "gyros_belt_y", "gyros_belt_z", "accel_belt_x", "accel_belt_y",	"accel_belt_z",	"magnet_belt_x","magnet_belt_y", "magnet_belt_z",	"roll_arm",	"pitch_arm", "yaw_arm", "total_accel_arm", "gyros_arm_x", "gyros_arm_y", "gyros_arm_z", "accel_arm_x",	"accel_arm_y", "accel_arm_z", "magnet_arm_x",	"magnet_arm_y", "magnet_arm_z","roll_dumbbell",	"pitch_dumbbell", "yaw_dumbbell", "total_accel_dumbbell","gyros_dumbbell_x",	"gyros_dumbbell_y", "gyros_dumbbell_z","accel_dumbbell_x", "accel_dumbbell_y", "accel_dumbbell_z", "magnet_dumbbell_x", "magnet_dumbbell_y", "magnet_dumbbell_z", "roll_forearm", "pitch_forearm",	"yaw_forearm", "total_accel_forearm","gyros_forearm_x","gyros_forearm_y","gyros_forearm_z","accel_forearm_x", "accel_forearm_y", "accel_forearm_z", "magnet_forearm_x", "magnet_forearm_y", "magnet_forearm_z"))
+#dim(predictset)
+
+#Predictions using Model 2:
+predictions2 <- predict(modelFit2,predictset,predict.all=FALSE)
+print(predictions2)
+
+
+#standardzied the prediction sample for the remaining models:
+preObj1 <- preProcess(predictset,method=c("center","scale"))
+predictset <- predict(preObj1,predictset)
+#str(predictset)
+
+
+#Predictions using Model 1:
+predictions1 <- predict(modelFit1,predictset,predict.all=FALSE)
+print(predictions1)
+
+#Predictions using Model 3 (Model 1&2's combinations:
+pred1V <- predict(modelFit1,predictset)
+pred2V <- predict(modelFit2,predictset)
+predDF <- data.frame(test1=pred1V,test2=pred2V)
+combPredV <- predict(combModFit,predDF)
+print(combPredV)
+
+#Predictions using Model 4:
+predictions4 <- predict(modelFit4,predictset,predict.all=FALSE)
+print(predictions4)
+
+```
+It turns out that the answers generated by predictions2 have the highest prediction power. This model correctly predicts 20 out of 20 cases in the prediction sample.
+
+#### Reference
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
